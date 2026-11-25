@@ -32,6 +32,11 @@ MODULES_WITH_ISSUES=0
 TOTAL_ISSUES=0
 TOTAL_TIDY_ISSUES=0
 TOTAL_MONGODB_ISSUES=0
+TOTAL_DATA_MODELS_ISSUES=0
+
+# Module that systems outside this repository import (ExternalRemediationRequest
+# and MaintenanceRequest Go types). It must stay requirable on its own.
+DATA_MODELS_MODULE="github.com/nvidia/nvsentinel/data-models"
 
 # Function to print colored output
 print_error() {
@@ -208,6 +213,75 @@ check_mongodb_imports() {
     return $mongodb_issues
 }
 
+# Function to check that data-models stays importable from outside this repository.
+# It reads go.mod directly, so it also works when the module graph cannot load.
+check_data_models_standalone() {
+    local gomod_file="$1"
+    local gomod_dir
+    gomod_dir="$(dirname "$gomod_file")"
+    local standalone_issues=0
+
+    # Read go.mod without loading the module graph
+    local gomod_text
+    if ! gomod_text=$(cd "$gomod_dir" && go mod edit -print 2>/dev/null); then
+        return 0  # Skip if go.mod cannot be read; the other checks report it
+    fi
+
+    local module_name
+    module_name=$(echo "$gomod_text" | awk '/^module / { print $2; exit }')
+
+    if [[ "$module_name" != "$DATA_MODELS_MODULE" ]]; then
+        return 0
+    fi
+
+    # Requirements on other modules of this repository (single and grouped formats)
+    local local_requires
+    local_requires=$(echo "$gomod_text" | awk '
+        /^require \(/ { in_require=1; next }
+        /^\)/ && in_require { in_require=0; next }
+        /^require / && !in_require { print $2 }
+        in_require && /^[[:space:]]*[^[:space:]]/ { print $1 }
+    ' | grep "^github.com/nvidia/nvsentinel/" || true)
+
+    # Any replace directive (single and grouped formats)
+    local replaces
+    replaces=$(echo "$gomod_text" | awk '
+        /^replace \(/ { in_replace=1; next }
+        /^\)/ && in_replace { in_replace=0; next }
+        /^replace / && !in_replace { print $2 }
+        in_replace && /^[[:space:]]*[^[:space:]]/ { print $1 }
+    ' || true)
+
+    if [[ -n "$local_requires" ]]; then
+        print_error "  ✗ $DATA_MODELS_MODULE requires other modules of this repository:"
+        while IFS= read -r dep; do
+            print_error "    $dep"
+        done <<< "$local_requires"
+        standalone_issues=1
+    fi
+
+    if [[ -n "$replaces" ]]; then
+        print_error "  ✗ $DATA_MODELS_MODULE has replace directives:"
+        while IFS= read -r dep; do
+            print_error "    replace $dep"
+        done <<< "$replaces"
+        standalone_issues=1
+    fi
+
+    if [[ $standalone_issues -ne 0 ]]; then
+        print_error "    Systems outside this repository import $DATA_MODELS_MODULE for the"
+        print_error "    ExternalRemediationRequest and MaintenanceRequest Go types. Go ignores replace"
+        print_error "    directives in a dependency: in their builds, a requirement on another module of"
+        print_error "    this repository does not resolve, and a replaced module gets a different version."
+        print_error "    Move the shared code into data-models instead of requiring another module"
+        TOTAL_DATA_MODELS_ISSUES=$((TOTAL_DATA_MODELS_ISSUES + 1))
+    else
+        print_info "  ✓ $DATA_MODELS_MODULE requires no other module of this repository and has no replace directive"
+    fi
+
+    return $standalone_issues
+}
+
 # Function to validate a single go.mod file
 validate_gomod() {
     local gomod_file="$1"
@@ -221,6 +295,15 @@ validate_gomod() {
     if ! cd "$gomod_dir" 2>/dev/null; then
         print_error "  ✗ Cannot access directory: $gomod_dir"
         return 1
+    fi
+
+    # Check that data-models stays importable from outside this repository.
+    # This runs before the dependency listing, which fails when go.mod requires
+    # a local module without a replace directive.
+    local standalone_issues=0
+    if ! check_data_models_standalone "$gomod_file"; then
+        standalone_issues=1
+        MODULES_WITH_ISSUES=$((MODULES_WITH_ISSUES + 1))
     fi
 
     # Get all required dependencies
@@ -238,9 +321,11 @@ validate_gomod() {
         local tidy_issues=0
         if ! check_mod_tidy "$gomod_file"; then
             tidy_issues=$((tidy_issues + 1))
-            MODULES_WITH_ISSUES=$((MODULES_WITH_ISSUES + 1))
+            if [[ $standalone_issues -eq 0 ]]; then
+                MODULES_WITH_ISSUES=$((MODULES_WITH_ISSUES + 1))
+            fi
         fi
-        return $tidy_issues
+        return $((tidy_issues + standalone_issues))
     fi
 
     # Get current replace directives (handle both single and grouped formats)
@@ -372,7 +457,7 @@ validate_gomod() {
     local mongodb_issues=0
     if ! check_mongodb_imports "$gomod_file"; then
         mongodb_issues=$((mongodb_issues + 1))
-        if [[ $issues_found -eq 0 ]]; then
+        if [[ $issues_found -eq 0 && $standalone_issues -eq 0 ]]; then
             MODULES_WITH_ISSUES=$((MODULES_WITH_ISSUES + 1))
         fi
     fi
@@ -381,17 +466,17 @@ validate_gomod() {
     local tidy_issues=0
     if ! check_mod_tidy "$gomod_file"; then
         tidy_issues=$((tidy_issues + 1))
-        if [[ $issues_found -eq 0 ]]; then
+        if [[ $issues_found -eq 0 && $standalone_issues -eq 0 ]]; then
             MODULES_WITH_ISSUES=$((MODULES_WITH_ISSUES + 1))
         fi
     fi
 
     # Summary for this module
-    local total_module_issues=$((issues_found + mongodb_issues + tidy_issues))
+    local total_module_issues=$((issues_found + mongodb_issues + tidy_issues + standalone_issues))
     if [[ $total_module_issues -eq 0 ]]; then
         print_info "  ✓ All validations passed"
     else
-        if [[ $issues_found -eq 0 && $tidy_issues -gt 0 ]]; then
+        if [[ $issues_found -eq 0 && $standalone_issues -eq 0 && $tidy_issues -gt 0 ]]; then
             MODULES_WITH_ISSUES=$((MODULES_WITH_ISSUES + 1))
         fi
     fi
@@ -434,13 +519,14 @@ main() {
     print_info "========================================"
     print_info "Total modules checked: $TOTAL_MODULES"
 
-    if [[ $TOTAL_ISSUES -eq 0 && $TOTAL_TIDY_ISSUES -eq 0 && $TOTAL_MONGODB_ISSUES -eq 0 ]]; then
+    if [[ $TOTAL_ISSUES -eq 0 && $TOTAL_TIDY_ISSUES -eq 0 && $TOTAL_MONGODB_ISSUES -eq 0 && $TOTAL_DATA_MODELS_ISSUES -eq 0 ]]; then
         print_success "All go.mod files are valid!"
         print_info "✓ No circular self-references found"
         print_info "✓ All local module dependencies have proper replace directives"
         print_info "✓ All local module dependencies use v0.0.0 version"
         print_info "✓ All modules are properly tidied"
         print_info "✓ No direct MongoDB driver usage outside store-client"
+        print_info "✓ data-models requires no other module of this repository and has no replace directive"
     else
         print_error "Validation failed!"
         print_error "Modules with issues: $MODULES_WITH_ISSUES"
@@ -452,6 +538,9 @@ main() {
         fi
         if [[ $TOTAL_MONGODB_ISSUES -gt 0 ]]; then
             print_error "Modules with direct MongoDB driver usage: $TOTAL_MONGODB_ISSUES"
+        fi
+        if [[ $TOTAL_DATA_MODELS_ISSUES -gt 0 ]]; then
+            print_error "data-models requirement or replace issues: $TOTAL_DATA_MODELS_ISSUES"
         fi
         print_info ""
         print_info "To fix these issues:"
@@ -469,6 +558,11 @@ main() {
             print_info "   - Use database-agnostic types from store-client/pkg/datastore"
             step=$((step + 1))
         fi
+        if [[ $TOTAL_DATA_MODELS_ISSUES -gt 0 ]]; then
+            print_info "$step. Remove the requirements on other modules of this repository and all replace directives from data-models/go.mod"
+            print_info "   - Move the code that data-models needs into data-models"
+            step=$((step + 1))
+        fi
         if [[ $TOTAL_TIDY_ISSUES -gt 0 ]]; then
             print_info "$step. Run 'go mod tidy' in each affected module directory"
             step=$((step + 1))
@@ -476,7 +570,7 @@ main() {
         print_info "$step. Re-run this script to verify fixes"
     fi
 
-    exit $((TOTAL_ISSUES + TOTAL_TIDY_ISSUES + TOTAL_MONGODB_ISSUES > 0 ? 1 : 0))
+    exit $((TOTAL_ISSUES + TOTAL_TIDY_ISSUES + TOTAL_MONGODB_ISSUES + TOTAL_DATA_MODELS_ISSUES > 0 ? 1 : 0))
 }
 
 # Handle script arguments
@@ -505,6 +599,8 @@ DESCRIPTION:
     10. Reports any local modules with incorrect versions
     11. Reports any modules that need 'go mod tidy' to be run
     12. Reports any modules with direct MongoDB driver usage (except store-client)
+    13. Ensures data-models requires no other nvsentinel module and has no
+        replace directive, and reports any that it finds
 
     The script will exit with code 0 if all validations pass, or code 1 if
     any issues are found.
@@ -512,6 +608,12 @@ DESCRIPTION:
     Database Abstraction: Only the store-client module is allowed to import
     go.mongodb.org/mongo-driver directly. All other modules must use the
     database-agnostic interfaces provided by store-client.
+
+    Standalone data-models: Systems outside this repository import the
+    data-models module for the ExternalRemediationRequest and
+    MaintenanceRequest Go types. Go ignores replace directives in a
+    dependency, so data-models must not require other nvsentinel modules and
+    must not contain replace directives.
 
 EXAMPLES:
     # Validate all go.mod files

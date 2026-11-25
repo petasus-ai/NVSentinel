@@ -385,7 +385,63 @@ The external system can be a Kubernetes controller, a script, or an operator who
 5. **Ignore closed requests.** If the ExternalRemediationRequest has a `status.completionTime`, janitor already took the node back. Take no action on the node.
 6. **Stop when someone deletes the request.** If the ExternalRemediationRequest has a `metadata.deletionTimestamp`, janitor returns the node to NVSentinel before Kubernetes removes the object. When this field appears, stop all work on the node.
 
-An external system can use the Kubernetes unstructured client to follow rule 4. This client reads and writes any object as a map, so the external system does not need NVSentinel Go types.
+An external system that is written in Go can follow rule 4 with one of these clients:
+
+- **The NVSentinel Go types.** The package `pkg/apis/nvsentinel/v1` in the module `github.com/nvidia/nvsentinel/data-models` contains the ExternalRemediationRequest type. This module requires no other NVSentinel module.
+- **The Kubernetes unstructured client.** This client reads and writes any object as a map, so the external system does not need NVSentinel Go types.
+
+To use the Go types, require the module at the commit of the NVSentinel release in your cluster. Go records the commit as a pseudo-version.
+
+```bash
+NVSENTINEL_VERSION="<your-nvsentinel-version>"
+COMMIT="$(git ls-remote https://github.com/NVIDIA/NVSentinel.git "refs/tags/${NVSENTINEL_VERSION}^{}" | cut -f1)"
+
+go get "github.com/nvidia/nvsentinel/data-models@${COMMIT}"
+```
+
+Add the types to the scheme of your client with `nvsentinelv1.AddToScheme`. The status conditions are protobuf messages. The package `github.com/nvidia/nvsentinel/data-models/pkg/condition` converts them to `metav1.Condition` and back, so you can use `meta.SetStatusCondition`. This function follows rule 4 with a controller-runtime client:
+
+```go
+import (
+	"context"
+	"fmt"
+
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	nvsentinelv1 "github.com/nvidia/nvsentinel/data-models/pkg/apis/nvsentinel/v1"
+	"github.com/nvidia/nvsentinel/data-models/pkg/condition"
+)
+
+// reportResult sets ExternalRemediationComplete and keeps all other conditions.
+func reportResult(ctx context.Context, c client.Client, name string, result metav1.Condition) error {
+	result.Type = nvsentinelv1.ConditionExternalRemediationComplete
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		extrr := &nvsentinelv1.ExternalRemediationRequest{}
+		if err := c.Get(ctx, client.ObjectKey{Name: name}, extrr); err != nil {
+			return err
+		}
+
+		if extrr.Status == nil {
+			return fmt.Errorf("ExternalRemediationRequest %s has no status", name)
+		}
+
+		conditions := condition.ToMetav1Slice(extrr.Status.Conditions)
+		meta.SetStatusCondition(&conditions, result)
+		extrr.Status.Conditions = condition.FromMetav1Slice(conditions)
+
+		return c.Status().Update(ctx, extrr)
+	})
+	if err != nil {
+		return fmt.Errorf("update status of ExternalRemediationRequest %s: %w", name, err)
+	}
+
+	return nil
+}
+```
 
 For a full Kubebuilder scaffold of a controller that reconciles a custom resource, see [Writing a Drain Plugin](./writing-a-drain-plugin.md).
 

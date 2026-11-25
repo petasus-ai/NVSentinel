@@ -14,11 +14,15 @@
 
 package managed
 
+import (
+	nvsentinelv1 "github.com/nvidia/nvsentinel/data-models/pkg/apis/nvsentinel/v1"
+)
+
 const (
-	MRAPIGroup = "nvsentinel.dgxc.nvidia.com"
-	MRVersion  = "v1"
-	MRKind     = "MaintenanceRequest"
-	MRResource = "maintenancerequests"
+	MRAPIGroup = nvsentinelv1.GroupName
+	MRVersion  = nvsentinelv1.Version
+	MRKind     = nvsentinelv1.MaintenanceRequestKind
+	MRResource = nvsentinelv1.MaintenanceRequestResource
 
 	MRAgentName                 = "lifecycle-manager"
 	MRRequesterAgentMetadataKey = "maintenanceRequestRequesterAgent"

@@ -237,6 +237,49 @@ fault-remediation selects the work after the drain. Its configuration maps each 
 
 > **Note:** The webhook does not let you change `spec.healthEvent` after you create the MaintenanceRequest.
 
+A program that is written in Go can create the MaintenanceRequest with the NVSentinel Go types. The package `pkg/apis/nvsentinel/v1` in the module `github.com/nvidia/nvsentinel/data-models` contains the MaintenanceRequest type. The package `pkg/protos` in the same module contains the spec types. Require the module at the commit of the NVSentinel release in your cluster. [Integrating External Remediation](./integrating-external-remediation.md) shows the command in section 7.
+
+Add the types to the scheme of your client with `nvsentinelv1.AddToScheme`. This function creates the MaintenanceRequest of this section with a controller-runtime client:
+
+```go
+import (
+	"context"
+	"fmt"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	nvsentinelv1 "github.com/nvidia/nvsentinel/data-models/pkg/apis/nvsentinel/v1"
+	protos "github.com/nvidia/nvsentinel/data-models/pkg/protos"
+)
+
+// requestMaintenance asks NVSentinel to cordon and drain the node.
+func requestMaintenance(ctx context.Context, c client.Client, nodeName string) error {
+	mr := &nvsentinelv1.MaintenanceRequest{
+		ObjectMeta: metav1.ObjectMeta{Name: "maintenance-" + nodeName},
+		Spec: &protos.MaintenanceRequestSpec{
+			HealthEvent: &protos.HealthEvent{
+				Version:           1,
+				Agent:             "my-maintenance-tool",
+				ComponentClass:    "Node",
+				CheckName:         "PlannedMaintenance",
+				NodeName:          nodeName,
+				IsHealthy:         false,
+				IsFatal:           false,
+				RecommendedAction: protos.RecommendedAction_NONE,
+				Message:           "Planned hardware maintenance",
+			},
+		},
+	}
+
+	if err := c.Create(ctx, mr); err != nil {
+		return fmt.Errorf("create MaintenanceRequest for node %s: %w", nodeName, err)
+	}
+
+	return nil
+}
+```
+
 ---
 
 ## 5. Validate the MaintenanceRequest

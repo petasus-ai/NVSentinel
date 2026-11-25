@@ -32,10 +32,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/nvidia/nvsentinel/commons/pkg/condition"
 	"github.com/nvidia/nvsentinel/commons/pkg/distributedlock"
 	"github.com/nvidia/nvsentinel/commons/pkg/managed"
 	"github.com/nvidia/nvsentinel/commons/pkg/tracing"
+	nvsentinelapi "github.com/nvidia/nvsentinel/data-models/pkg/apis/nvsentinel/v1"
+	"github.com/nvidia/nvsentinel/data-models/pkg/condition"
 	"github.com/nvidia/nvsentinel/data-models/pkg/model"
 	protos "github.com/nvidia/nvsentinel/data-models/pkg/protos"
 	nvsentinelv1 "github.com/nvidia/nvsentinel/janitor/api/v1alpha1"
@@ -46,8 +47,8 @@ const (
 	// ExternalRemediationFinalizer gates node cleanup before the ExtRR is GC'd.
 	ExternalRemediationFinalizer = "nvsentinel.dgxc.nvidia.com/external-remediation-cleanup"
 
-	ConditionNVSentinelOwnershipReleased = "NVSentinelOwnershipReleased"
-	ConditionExternalRemediationComplete = "ExternalRemediationComplete"
+	ConditionNVSentinelOwnershipReleased = nvsentinelapi.ConditionNVSentinelOwnershipReleased
+	ConditionExternalRemediationComplete = nvsentinelapi.ConditionExternalRemediationComplete
 
 	reasonInitializing           = "Initializing"
 	reasonAwaitingExternalSystem = "AwaitingExternalSystem"

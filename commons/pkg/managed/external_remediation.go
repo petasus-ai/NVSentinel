@@ -14,20 +14,15 @@
 
 package managed
 
+import (
+	nvsentinelv1 "github.com/nvidia/nvsentinel/data-models/pkg/apis/nvsentinel/v1"
+)
+
 // ExtRR identity constants. These describe the ExternalRemediationRequest CRD
-// from ADR-040 and are referenced from three independent code paths:
-//
-//   - janitor: registers the CRD on the scheme, applies and removes the
-//     release taint during reconciliation.
-//   - fault-remediation/crstatus: detects ExtRR resources to apply the
-//     asymmetric completion semantics in StatusChecker.
-//   - fault-remediation/remediation: constructs ExtRR CRs from the
-//     EXTERNAL_REMEDIATION action template.
-//
-// Keeping the strings in one place prevents drift between the apply side and
-// the observe side — a typo would silently break the dispatcher's predicate.
+// from ADR-040. The values come from the data-models API package that defines
+// the type.
 const (
-	ExtRRApiGroup = "nvsentinel.dgxc.nvidia.com"
-	ExtRRVersion  = "v1"
-	ExtRRKind     = "ExternalRemediationRequest"
+	ExtRRApiGroup = nvsentinelv1.GroupName
+	ExtRRVersion  = nvsentinelv1.Version
+	ExtRRKind     = nvsentinelv1.ExternalRemediationRequestKind
 )

@@ -32,10 +32,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/nvidia/nvsentinel/commons/pkg/condition"
 	"github.com/nvidia/nvsentinel/commons/pkg/distributedlock"
 	"github.com/nvidia/nvsentinel/commons/pkg/healthpub"
 	"github.com/nvidia/nvsentinel/commons/pkg/managed"
+	nvsentinelv1 "github.com/nvidia/nvsentinel/data-models/pkg/apis/nvsentinel/v1"
+	"github.com/nvidia/nvsentinel/data-models/pkg/condition"
 	pb "github.com/nvidia/nvsentinel/data-models/pkg/protos"
 	"github.com/nvidia/nvsentinel/lifecycle-manager/api/v1alpha1"
 )
@@ -43,7 +44,7 @@ import (
 const (
 	mrFinalizerName = "nvsentinel.dgxc.nvidia.com/maintenance-request-cleanup"
 
-	conditionHealthEventEmitted = "HealthEventEmitted"
+	conditionHealthEventEmitted = nvsentinelv1.ConditionHealthEventEmitted
 	reasonEmitted               = "Emitted"
 	reasonEmitFailed            = "EmitFailed"
 	reasonBlocked               = "Blocked"
